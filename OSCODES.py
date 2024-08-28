@@ -499,3 +499,149 @@ int main() {
 }
 '''
         )
+    with st.expander("RR"):
+        st.code(
+            '''
+            #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <limits.h>
+#include <sys/wait.h>
+
+#define MAX_PROCESSES 100
+#define SHM_SIZE sizeof(struct process) * MAX_PROCESSES
+
+struct process {
+    char name[5];
+    int ar;  // Arrival time
+    int ser; // Burst time
+};
+
+void print_gantt_chart(struct process *p, int n, int *remaining_time, int time_quantum) {
+    printf("Gantt Chart:\n");
+    int time = 0;
+    int all_done = 0;
+
+    printf("0 ");
+    while (!all_done) {
+        all_done = 1;
+        for (int i = 0; i < n; i++) {
+            if (remaining_time[i] > 0) {
+                all_done = 0;
+                int exec_time = (remaining_time[i] < time_quantum) ? remaining_time[i] : time_quantum;
+                printf("P%s(%d-%d) ", p[i].name, time, time + exec_time);
+                remaining_time[i] -= exec_time;
+                time += exec_time;
+            }
+        }
+    }
+    printf("\n");
+}
+
+void calculate_times(struct process *p, int n, int *completion_time, int *turnaround_time, int *waiting_time, int time_quantum) {
+    int remaining_time[MAX_PROCESSES];
+
+    for (int i = 0; i < n; i++) {
+        remaining_time[i] = p[i].ser;
+    }
+
+    int time = 0;
+    int completed = 0;
+    while (completed < n) {
+        int all_done = 1;
+        for (int i = 0; i < n; i++) {
+            if (remaining_time[i] > 0) {
+                all_done = 0;
+                int exec_time = (remaining_time[i] < time_quantum) ? remaining_time[i] : time_quantum;
+                time += exec_time;
+                remaining_time[i] -= exec_time;
+
+                if (remaining_time[i] == 0) {
+                    completed++;
+                    completion_time[i] = time;
+                    turnaround_time[i] = completion_time[i] - p[i].ar;
+                    waiting_time[i] = turnaround_time[i] - p[i].ser;
+                }
+            }
+        }
+        if (all_done) break;
+    }
+}
+
+void print_times(struct process *p, int n, int *completion_time, int *turnaround_time, int *waiting_time) {
+    printf("\nProcess\tArrival\tBurst\tCompletion\tTurnaround\tWaiting\n");
+    for (int i = 0; i < n; i++) {
+        printf("%s\t%d\t%d\t%d\t\t%d\t\t%d\n", p[i].name, p[i].ar, p[i].ser,
+               completion_time[i], turnaround_time[i], waiting_time[i]);
+    }
+}
+
+int main() {
+    int shmid;
+    struct process *p;
+    struct process *shared_memory;
+    int n;
+    int time_quantum;
+    pid_t pid;
+
+    key_t key = 1234;
+    shmid = shmget(key, SHM_SIZE, 0666 | IPC_CREAT);
+    if (shmid < 0) {
+        perror("shmget failed");
+        exit(1);
+    }
+
+    shared_memory = (struct process *)shmat(shmid, NULL, 0);
+    if (shared_memory == (struct process *)-1) {
+        perror("shmat failed");
+        exit(1);
+    }
+
+    printf("Enter number of processes: ");
+    scanf("%d", &n);
+
+    p = shared_memory;
+    for (int i = 0; i < n; i++) {
+        printf("Enter process name, arrival time, and burst time for process %d:\n", i + 1);
+        scanf("%s %d %d", p[i].name, &p[i].ar, &p[i].ser);
+    }
+
+    printf("Enter time quantum: ");
+    scanf("%d", &time_quantum);
+
+    pid = fork();
+    if (pid < 0) {
+        perror("fork failed");
+        exit(1);
+    }
+
+    if (pid == 0) {
+        struct process *p = shared_memory;
+        int completion_time[MAX_PROCESSES];
+        int turnaround_time[MAX_PROCESSES];
+        int waiting_time[MAX_PROCESSES];
+        int remaining_time[MAX_PROCESSES];
+
+        for (int i = 0; i < n; i++) {
+            remaining_time[i] = p[i].ser;
+        }
+
+        calculate_times(p, n, completion_time, turnaround_time, waiting_time, time_quantum);
+        print_gantt_chart(p, n, remaining_time, time_quantum);
+        print_times(p, n, completion_time, turnaround_time, waiting_time);
+
+        shmdt(shared_memory);
+        shmctl(shmid, IPC_RMID, NULL);
+    } else {
+        wait(NULL);
+    }
+
+    return 0;
+}
+'''
+        )
+        
